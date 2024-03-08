@@ -36,6 +36,10 @@ func (s *server) handleConnection(conn net.Conn) {
 		n, _ := conn.Read(buf)
 		mssg := string(buf[:n])
 		s.messages <- mssg
+		if mssg == "bye\n" {
+			s.messages <- " has left the chat\n"
+			return
+		}
 	}
 }
 
@@ -76,6 +80,7 @@ func (s *server) start() error {
 			continue
 		}
 		s.addClients <- conn
+		s.messages <- " has appered in chat\n"
 		go s.handleConnection(conn)
 	}
 }
@@ -83,6 +88,5 @@ func (s *server) start() error {
 func main() {
 	app := newServer()
 	fmt.Println("server hosted on ", addr)
-	// log.Fatal(app.start())
 	app.start()
 }
