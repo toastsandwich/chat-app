@@ -3,85 +3,76 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net"
 )
 
 type Server struct {
-	addr       string
-	clients    map[net.Conn]struct{}
-	addClients chan net.Conn
-	rmClients  chan net.Conn
-	messages   chan string
+	addr      string
+	clients   map[net.Conn]bool
+	addClient chan net.Conn
+	rmClient  chan net.Conn
+	messages  chan string
 }
 
 func NewServer(addr string) *Server {
 	return &Server{
-		addr:       addr,
-		clients:    make(map[net.Conn]struct{}),
-		addClients: make(chan net.Conn),
-		rmClients:  make(chan net.Conn),
-		messages:   make(chan string),
+		addr:      addr,
+		clients:   make(map[net.Conn]bool),
+		addClient: make(chan net.Conn),
+		rmClient:  make(chan net.Conn),
+		messages:  make(chan string),
 	}
 }
 
 func (s *Server) Start() error {
-	fmt.Println("[*] Starting Server....")
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
 	}
-	fmt.Println("[+] Server Up!!!")
-	defer ln.Close()
-
 	go s.handleMessages()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println("connection error skipping this client")
-			return err
+			log.Println("accepting error")
+			continue
 		}
-		go s.HandleConn(conn)
-		s.addClients <- conn
-		s.messages <- fmt.Sprintf("%s has arrived\n", conn.RemoteAddr().String())
+		s.messages <- fmt.Sprintf("%s has joined the room\n", conn.RemoteAddr().String())
+		s.addClient <- conn
+		go s.handleConnections(conn)
 	}
 }
 
-func (s *Server) HandleConn(conn net.Conn) {
+func (s *Server) handleConnections(conn net.Conn) {
 	defer func() {
-		s.rmClients <- conn
+		s.rmClient <- conn
 		conn.Close()
 	}()
-
 	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
 	for {
-		writer.Write([]byte(":::"))
 		mssg, _ := reader.ReadString('\n')
 		s.messages <- mssg
-		fmt.Println(mssg)
+
 		if mssg == "bye\n" {
-			s.messages <- fmt.Sprintf("%s has left the chat\n", conn.RemoteAddr().String())
 			return
 		}
 	}
+
 }
 
 func (s *Server) handleMessages() {
 	for {
 		select {
-		case conn := <-s.addClients:
-			s.clients[conn] = struct{}{}
-			fmt.Println(s.clients)
-		case conn := <-s.rmClients:
+		case conn := <-s.addClient:
+			s.clients[conn] = true
+		case conn := <-s.rmClient:
 			delete(s.clients, conn)
 		case mssg := <-s.messages:
 			for conn := range s.clients {
-				writer := bufio.NewWriter(conn)
-				msg := fmt.Sprintf("%s :: %s\n", conn.RemoteAddr().String(), mssg)
-				_, err := writer.Write([]byte(msg))
+				_, err := conn.Write([]byte(mssg))
 				if err != nil {
+					s.rmClient <- conn
 					conn.Close()
-					s.rmClients <- conn
 				}
 			}
 		}
